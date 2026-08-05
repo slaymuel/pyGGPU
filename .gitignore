@@ -1,0 +1,8 @@
+venv/*
+build/*
+.vscode/*
+__pycache__/*
+*.pb.cc
+*.pb.h
+*.pyc
+*_pb2.py

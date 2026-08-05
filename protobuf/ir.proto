@@ -1,0 +1,116 @@
+syntax = "proto3";
+
+package ir;
+
+// ===============================
+// Top-level IR container
+// ===============================
+message IR {
+    repeated Operation ops = 1;
+    Environment env = 2;
+}
+
+// ===============================
+// Operation wrapper
+// ===============================
+message Operation {
+    oneof kind {
+        AddOp add = 1;
+        LoadOp load = 2;
+        StoreOp store = 3;
+        ConstOp constant = 4;
+        ForOp for_op = 5;
+        IfOp if_op = 6;
+        ReturnOp ret = 7;
+    }
+}
+
+// ===============================
+// Operand: SSA value or literal
+// ===============================
+message Operand {
+    oneof kind {
+        string ssa = 1;
+        int64 int_const = 2;
+        double float_const = 3;
+        bool bool_const = 4;
+        Buffer buffer = 5;
+    }
+}
+
+// ===============================
+// Arithmetic ops
+// ===============================
+message AddOp {
+    string result = 1;
+    Operand lhs = 2;
+    Operand rhs = 3;
+}
+
+// ===============================
+// Memory ops
+// ===============================
+message LoadOp {
+    string result = 1;
+    string buffer = 2;   // buffer name: "ai", "aj"
+    Operand index = 3;
+}
+
+message StoreOp {
+    string buffer = 1;
+    Operand index = 2;
+    Operand value = 3;
+}
+
+// ===============================
+// Constants
+// ===============================
+message ConstOp {
+    string result = 1;
+    Operand value = 2;   // int_const, float_const, bool_const
+}
+
+// ===============================
+// Control flow: For
+// ===============================
+message ForOp {
+    string iv = 1;            // induction variable SSA name
+    Operand lb = 2;           // lower bound
+    Operand ub = 3;           // upper bound
+    Operand step = 4;         // step
+    repeated Operation body = 5;
+}
+
+// ===============================
+// Control flow: If
+// ===============================
+message IfOp {
+    Operand cond = 1;
+    repeated Operation then_ops = 2;
+    repeated Operation else_ops = 3;
+}
+
+// ===============================
+// Return
+// ===============================
+message ReturnOp {
+    Operand value = 1;
+}
+
+// ===============================
+// Env
+// ===============================
+message Environment {
+    repeated Binding bindings = 1;
+}
+
+message Binding {
+    string name = 1;
+    Operand value = 2;
+}
+
+message Buffer {
+    string name = 1;
+    repeated int64 shape = 2;
+    string dtype = 3;   // "f32", "i32", etc.
+}
