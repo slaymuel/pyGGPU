@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 project(pyGGpu LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -24,6 +24,7 @@ set(pybind11_DIR "${pybind11_CMAKE_DIR}" CACHE PATH "Path to pybind11 CMake file
 find_package(pybind11 CONFIG REQUIRED)
 
 pybind11_add_module(pyggpu MODULE
+  c++/src/compiler.cpp
   c++/bindings/pyggpu.cpp
   c++/serialization/ir.pb.cc
 )
@@ -48,7 +49,16 @@ message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 target_include_directories(pyggpu PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(pyggpu PRIVATE ${LLVM_DEFINITIONS})
 
-llvm_map_components_to_libnames(LLVM_LIBS Core Support)
+# LLJIT requires ORC/ExecutionEngine-related components in addition to core IR support.
+llvm_map_components_to_libnames(LLVM_LIBS
+  Core
+  Support
+  OrcJIT
+  ExecutionEngine
+  RuntimeDyld
+  nativecodegen
+  native
+)
 target_link_libraries(pyggpu PRIVATE ${LLVM_LIBS})
 
 target_include_directories(pyggpu PRIVATE c++/src)
