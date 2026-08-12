@@ -10,6 +10,7 @@
 #include <pybind11/numpy.h>
 #include "../serialization/ir.pb.h"
 #include "kernel.h"
+#include "kernel_registry.h"
 #include "compiler.h"
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
@@ -25,10 +26,14 @@
 #include <llvm/Support/TargetSelect.h>
 
 namespace py = pybind11;
+using namespace pyggpu;
 
 class PyGGpu{
 public:
-    PyGGpu() = default;
+    PyGGpu(){
+
+    }
+
     ~PyGGpu() = default;
 
     void launch(const std::string& kernel_name, const ir::IR& ir, py::tuple args, py::dict kwargs){
@@ -81,15 +86,19 @@ public:
 
     void compile(const std::string& kernel_name, const ir::IR& ir, py::tuple& args, py::dict& kwargs){
         std::string mangled_name = kernel_name;//getMangledName(kernel_name, args, kwargs);
-        if(!fn_cache.contains(mangled_name)){
+        if(!kernel_cache.contains(mangled_name)){
             std::cout << "Compiling kernel: " << mangled_name << std::endl;
-            auto kernel = compiler.createKernel(kernel_name, ir, args, kwargs);
-            fn_cache.insert_or_assign(mangled_name, std::move(kernel));
+            //auto kernel = compiler.compile(kernel_name, ir, args, kwargs);
+            auto compiled = compiler.compile(kernel_name, ir, args, kwargs);
+            auto kernel = kernel_registry::createKernel(kernel_name, compiled.sig_id, compiled.fn_ptr);
+
+            kernel_cache.insert_or_assign(mangled_name, std::move(kernel));
             std::cout << "Kernel compiled and cached: " << mangled_name << std::endl;
-            fn_cache[mangled_name]->launch();
+            kernel_cache[mangled_name]->launchFromTuple(args);
             return;
         } else {
             std::cout << "Kernel already compiled: " << mangled_name << std::endl;
+            kernel_cache[mangled_name]->launchFromTuple(args);
             return;
         }
 
@@ -103,6 +112,5 @@ public:
 private:
 
     pyggpu::Compiler compiler;
-    std::unordered_map<std::string, std::unique_ptr<pyggpu::BaseKernel>> fn_cache;
-
+    std::unordered_map<std::string, std::unique_ptr<pyggpu::BaseKernel>> kernel_cache;
 };

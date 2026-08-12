@@ -25,6 +25,7 @@ find_package(pybind11 CONFIG REQUIRED)
 
 pybind11_add_module(pyggpu MODULE
   c++/src/compiler.cpp
+  c++/src/kernel_registry.cpp
   c++/bindings/pyggpu.cpp
   c++/serialization/ir.pb.cc
 )

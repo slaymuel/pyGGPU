@@ -1,5 +1,6 @@
 #include "pybind11/pybind11.h"
 #include "pyggpu.h"
+#include "kernel_registry.h"
 
 namespace py = pybind11;
 
@@ -18,5 +19,6 @@ PYBIND11_MODULE(pyggpu, m) {
             cpp_ir.ParseFromString(serialized);
 
             self.launch(kernelName, cpp_ir, args, kwargs);
-        });
+        })
+        .def_static("dumpSignatures", &pyggpu::kernel_registry::dumpSignatures);
 }

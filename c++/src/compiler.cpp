@@ -3,10 +3,13 @@
 #include <string>
 #include <stdexcept>
 #include <unordered_map>
+#include <algorithm>
+#include <iterator>
+#include <ranges>
+#include <vector>
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include "../serialization/ir.pb.h"
-#include "kernel.h"
 #include "type_mapping.h"
 
 #include <llvm/IR/BasicBlock.h>
@@ -23,6 +26,9 @@
 #include <llvm/Support/TargetSelect.h>
 
 namespace py = pybind11;
+
+namespace {
+} // namespace
 
 namespace pyggpu {
 
@@ -49,7 +55,7 @@ Compiler::Compiler(){
     this->jit = std::move(*jit);
 }
 
-std::unique_ptr<pyggpu::BaseKernel> Compiler::createKernel(std::string kernel_name, const ir::IR& ir, const py::tuple& args, const py::dict& kwargs) {
+CompiledFn Compiler::compile(std::string kernel_name, const ir::IR& ir, const py::tuple& args, const py::dict& kwargs) {
     auto ctx = std::make_unique<llvm::LLVMContext>();
     auto module = std::make_unique<llvm::Module>("kernel", *ctx);
     // Setup the kernel arguments
@@ -74,17 +80,34 @@ std::unique_ptr<pyggpu::BaseKernel> Compiler::createKernel(std::string kernel_na
         llvm::errs() << "Failed to find symbol '" << kernel_name << "'\n";
         exit(1);
     }
+ 
+    void* kernel_ptr = sym->toPtr<void*>();
 
-    using KernelFn = void(*)(float*, float*);
-    KernelFn kernel = sym->toPtr<KernelFn>();
+    std::vector<KernelArg> sorted_kernel_args;
+    sorted_kernel_args.reserve(kernel_args.size());
+    for (const auto& kv : kernel_args)
+        sorted_kernel_args.push_back(kv.second);
+    std::sort(sorted_kernel_args.begin(), sorted_kernel_args.end(), [](const KernelArg& a, const KernelArg& b) {
+        return a.name < b.name;
+    });
 
-    std::vector<IRType> argTypes = ir.getArgumentTypes();
-    using sig = MakeSignature<argTypes...>::type;
+    auto arg_type_view = sorted_kernel_args | std::views::transform([](const KernelArg& arg) {
+        return arg.ir_type;
+    });
+    std::vector<IRBaseType> arg_types;
+    arg_types.reserve(sorted_kernel_args.size());
+    std::ranges::copy(arg_type_view, std::back_inserter(arg_types));
 
-    // Cache the compiled kernel.
-    return std::make_unique<pyggpu::Kernel<sig>>(
-        kernel_name, reinterpret_cast<void*>(kernel)
-    );
+    // Current kernel launcher supports two float32 buffers.
+    if (arg_types.size() != 2 ||
+        arg_types[0] != IRBaseType::F32Ptr ||
+        arg_types[1] != IRBaseType::F32Ptr) {
+        throw std::runtime_error("Unsupported kernel signature: expected (float32*, float32*)");
+    }
+
+    // Get the signature ID from the registry
+    auto sig_id = computeIdFromIR(arg_types);
+    return CompiledFn{kernel_ptr, sig_id};
 }
     
 void Compiler::lowerToLLVM(
@@ -163,7 +186,6 @@ void* Compiler::extractPointerFromPython(py::tuple args, py::dict kwargs, const 
     // kwargs
     if (kwargs.contains(name)) {
         py::array arr = kwargs[py::str(name)].cast<py::array>();
-        
         py::buffer_info info = arr.request();
         return info.ptr;
     }
@@ -174,7 +196,6 @@ void* Compiler::extractPointerFromPython(py::tuple args, py::dict kwargs, const 
         
         if (py::hasattr(obj, "name") && obj.attr("name").cast<std::string>() == name) {
             py::array arr = obj.attr("value").cast<py::array>();
-            // py::array arr = obj.cast<py::array>();
             py::buffer_info info = arr.request();
             return info.ptr;
         }
@@ -202,24 +223,35 @@ std::unordered_map<std::string, KernelArg> Compiler::createKernelArguments(
             std::string dtype = buf.dtype();
 
             llvm::Type* elemType = nullptr;
-            if (dtype == "float32") elemType = llvm::Type::getFloatTy(ctx);
-            else if (dtype == "float64") elemType = llvm::Type::getDoubleTy(ctx);
-            else if (dtype == "int32") elemType = llvm::Type::getInt32Ty(ctx);
-            else if (dtype == "int64") elemType = llvm::Type::getInt64Ty(ctx);
-            else throw std::runtime_error("Unsupported dtype: " + dtype);
-
+            IRBaseType ir_type;
+            if (dtype == "float32") {
+                elemType = llvm::Type::getFloatTy(ctx);
+                ir_type = IRBaseType::F32Ptr;
+            } else if (dtype == "float64"){
+                elemType = llvm::Type::getDoubleTy(ctx);
+                ir_type = IRBaseType::F64Ptr;
+            } else if (dtype == "int32") {
+                elemType = llvm::Type::getInt32Ty(ctx);
+                ir_type = IRBaseType::I32Ptr;
+            } else if (dtype == "int64") {
+                elemType = llvm::Type::getInt64Ty(ctx);
+                ir_type = IRBaseType::I64Ptr;
+            } else throw std::runtime_error("Unsupported dtype: " + dtype);
+            arg.ir_type = ir_type;
             arg.elementType = elemType;
             arg.llvmType = llvm::PointerType::getUnqual(elemType);
             arg.rawPtr = extractPointerFromPython(args, kwargs, arg.name);
         }
         else if (binding.value().has_int_const()) {
             arg.kind = KernelArg::Scalar;
+            arg.ir_type = IRBaseType::I64;
             arg.elementType = nullptr;
             arg.llvmType = llvm::Type::getInt64Ty(ctx);
             arg.intValue = binding.value().int_const();
         }
         else if (binding.value().has_float_const()) {
             arg.kind = KernelArg::Scalar;
+            arg.ir_type = IRBaseType::F64;
             arg.elementType = nullptr;
             arg.llvmType = llvm::Type::getDoubleTy(ctx);
             arg.floatValue = binding.value().float_const();

@@ -6,3 +6,4 @@ __pycache__/*
 *.pb.h
 *.pyc
 *_pb2.py
+*.txt

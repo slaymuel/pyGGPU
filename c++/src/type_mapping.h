@@ -1,7 +1,6 @@
 #pragma once
 
-#include <iostream>
-#include <typeinfo>
+#include <cstdint>
 
 enum class IRBaseType {
     F32,
@@ -16,6 +15,16 @@ enum class IRBaseType {
 
 template <IRBaseType K>
 struct MapType;
+
+template <>
+struct MapType<IRBaseType::F32> {
+    using type = float*;
+};
+
+template <>
+struct MapType<IRBaseType::F64> {
+    using type = double*;
+};
 
 template <>
 struct MapType<IRBaseType::F32Ptr> {
@@ -37,14 +46,12 @@ struct MapType<IRBaseType::I64> {
     using type = int64_t;
 };
 
-template<typename... Args>
-struct Signature {
-    static std::string asString() {
-        return "void(" + ((std::string(typeid(Args).name()) + ", ") + ...) + ")";
-    }
+template <>
+struct MapType<IRBaseType::I32Ptr> {
+    using type = int32_t;
 };
 
-template <IRBaseType... Ks>
-struct MakeSignature {
-    using type = Signature<typename MapType<Ks>::type...>;
+template <>
+struct MapType<IRBaseType::I64Ptr> {
+    using type = int64_t;
 };

@@ -5,7 +5,8 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include "../serialization/ir.pb.h"
-#include "kernel.h"
+#include "signature.h"
+#include "type_mapping.h"
 
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
@@ -26,7 +27,7 @@ namespace pyggpu {
 
 struct KernelArg {
     enum Kind { Buffer, Scalar };
-    IRBaseType type;
+    IRBaseType ir_type;
     Kind kind;
     std::string name;
     llvm::Type* llvmType;
@@ -36,10 +37,15 @@ struct KernelArg {
     double floatValue;
 };
 
+struct CompiledFn {
+    void* fn_ptr = nullptr;  
+    SignatureID sig_id = 0;  
+};
+
 class Compiler{
 public:
     Compiler();
-    std::unique_ptr<pyggpu::BaseKernel> createKernel(std::string kernel_name, const ir::IR& ir, const py::tuple& args, const py::dict& kwargs);
+    CompiledFn compile(std::string kernel_name, const ir::IR& ir, const py::tuple& args, const py::dict& kwargs);
 
 private:
     void lowerToLLVM(
