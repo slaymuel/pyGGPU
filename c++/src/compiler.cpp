@@ -12,18 +12,24 @@
 #include "../serialization/ir.pb.h"
 #include "type_mapping.h"
 
+
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
+#include <llvm/MC/TargetRegistry.h>   
 #include <llvm/Support/Error.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/TargetSelect.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/Target/TargetOptions.h>
+#include <llvm/TargetParser/Triple.h> 
 
 namespace py = pybind11;
 
@@ -58,31 +64,36 @@ Compiler::Compiler(){
 CompiledFn Compiler::compile(std::string kernel_name, const ir::IR& ir, const py::tuple& args, const py::dict& kwargs) {
     auto ctx = std::make_unique<llvm::LLVMContext>();
     auto module = std::make_unique<llvm::Module>("kernel", *ctx);
-    // Setup the kernel arguments
+
+    // Setup the kernel arguments. These should probably already be sorted here.
     auto kernel_args = createKernelArguments(ir, args, kwargs, module->getContext());
     std::cout << "Kernel arguments created." << std::endl;
     auto *fn = createKernelFunction(kernel_name, kernel_args, *module);
     std::cout << "Kernel function created. Lowering to LLVM..." << std::endl;
+
+    // Lower the IR to LLVM IR
     lowerToLLVM(ir, kernel_args, fn);
     std::cout << "Lowering complete." << std::endl;
-    std::cout << "Adding module to JIT..." << std::endl;
+
     // Register the module with the JIT (lazy compilation)
+    std::cout << "Adding module to JIT..." << std::endl;
     llvm::orc::ThreadSafeModule tsm(std::move(module), std::move(ctx));
     auto err = this->jit->addIRModule(std::move(tsm));
     if (err) {
         llvm::errs() << "Failed to add module\n";
         exit(1);
     }
-    std::cout << "Fetching kernel symbol: " << kernel_name << std::endl;
+
     // Look up the generated kernel function by its actual name.
+    std::cout << "Fetching kernel symbol: " << kernel_name << std::endl;
     auto sym = this->jit->lookup(kernel_name);
     if (!sym) {
         llvm::errs() << "Failed to find symbol '" << kernel_name << "'\n";
         exit(1);
     }
- 
     void* kernel_ptr = sym->toPtr<void*>();
 
+    // Sort kernel arguments by name for consistency (so that we get the same signature ID for the same kernel)
     std::vector<KernelArg> sorted_kernel_args;
     sorted_kernel_args.reserve(kernel_args.size());
     for (const auto& kv : kernel_args)
@@ -91,6 +102,8 @@ CompiledFn Compiler::compile(std::string kernel_name, const ir::IR& ir, const py
         return a.name < b.name;
     });
 
+    // Extract the argument types for the signature ID.
+    // This is way too ugly and needs to change. We already have the kernel args.....
     auto arg_type_view = sorted_kernel_args | std::views::transform([](const KernelArg& arg) {
         return arg.ir_type;
     });
@@ -98,18 +111,34 @@ CompiledFn Compiler::compile(std::string kernel_name, const ir::IR& ir, const py
     arg_types.reserve(sorted_kernel_args.size());
     std::ranges::copy(arg_type_view, std::back_inserter(arg_types));
 
-    // Current kernel launcher supports two float32 buffers.
-    if (arg_types.size() != 2 ||
-        arg_types[0] != IRBaseType::F32Ptr ||
-        arg_types[1] != IRBaseType::F32Ptr) {
-        throw std::runtime_error("Unsupported kernel signature: expected (float32*, float32*)");
-    }
-
     // Get the signature ID from the registry
     auto sig_id = computeIdFromIR(arg_types);
     return CompiledFn{kernel_ptr, sig_id};
 }
-    
+
+void Compiler::compilePTX(llvm::Module& module, llvm::Function* fn) {
+    // Set target triple & data layout on your LLVM module
+    std::string triple = "nvptx64-nvidia-cuda";
+    module.setTargetTriple(triple);
+
+    std::string err_str;
+    const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, err_str);
+    std::unique_ptr<llvm::TargetMachine> tm(
+        target->createTargetMachine(triple, "sm_80", "", {}, std::nullopt)
+    );
+    module.setDataLayout(tm->createDataLayout());
+
+    // Emit PTX code to a string
+    std::string ptx_output;
+    llvm::raw_string_ostream ss(ptx_output);
+    llvm::buffer_ostream write_stream(ss);
+    llvm::legacy::PassManager pm;
+    tm->addPassesToEmitFile(pm, write_stream, nullptr, llvm::CodeGenFileType::AssemblyFile);
+    pm.run(module);
+
+    // Create a PTXKernel and set ptx_output.
+}
+
 void Compiler::lowerToLLVM(
     const ir::IR &ir, 
     const std::unordered_map<std::string, KernelArg>& kernel_args, 

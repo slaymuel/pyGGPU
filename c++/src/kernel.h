@@ -4,27 +4,36 @@
 #include <string>
 #include <pybind11/numpy.h>
 #include "signature.h"
+#include <cuda.h>
 
 namespace py = pybind11;
 
 namespace pyggpu{
 
+enum class KernelTarget {
+    CPU,
+    GPU, // Automatically check which GPU is available and use it. If none is available, fallback to CPU.
+    NVIDIA, // Will perhaps always be PTX (with some Cuda additions)?
+    AMD,
+    PTX,
+    SPIR_V
+};
+
 class BaseKernel {
 public:
     virtual ~BaseKernel() = default;
     virtual void launchFromTuple(py::tuple py_args) = 0;
-    // virtual void* getPtr() const = 0;
 };
 
 template <typename Sig>
-class Kernel;
+class CPUKernel;
 
 template <typename... Args>
-class Kernel<Signature<Args...>> : public BaseKernel {
+class CPUKernel<Signature<Args...>> : public BaseKernel {
 public:
     using Fn = void(*)(Args...);
 
-    explicit Kernel(const std::string& symbol, void(*fn_ptr)(Args...))
+    explicit CPUKernel(const std::string& symbol, void(*fn_ptr)(Args...))
     : symbol(symbol) {
         this->fn = reinterpret_cast<Fn>(fn_ptr);
         std::cout << "Kernel created with symbol: " << symbol << std::endl;
@@ -34,23 +43,6 @@ public:
     void launch(LaunchArgs&&... args) {
         fn(std::forward<LaunchArgs>(args)...);
     }
-
-    //void launch() override{
-    //    // Here we can check if the passed arguments already exist on the gpu or if we need to copy them.
-    //    std::cout << "Launching kernel with symbol: " << symbol << std::endl;
-    //    float ai[5] = {0};
-    //    float aj[5] = {1, 2, 3, 4, 5};
-    //    std::cout << "Launching kernel..." << std::endl;
-    //    //reinterpret_cast<void(*)(float*, float*)>(fn)(ai, aj);
-    //    //fn(ai, aj);
-    //    std::cout << "Kernel done." << std::endl;
-    //    for(auto i = 0; i < 5; ++i) {
-    //        std::cout << "ai[" << i << "] = " << ai[i] << std::endl;
-    //    }
-    //    for(auto i = 0; i < 5; ++i) {
-    //        std::cout << "aj[" << i << "] = " << aj[i] << std::endl;
-    //    }
-    //}
 
     void launchFromTuple(py::tuple py_args) {
         if (py_args.size() != sizeof...(Args)) {
@@ -116,6 +108,67 @@ private:
             castPythonArg<std::tuple_element_t<Is, TupleT>>(args[Is])...
         );
     }
+};
+
+template <typename Sig>
+class PTXKernel;
+
+template <typename... Args>
+class PTXKernel<Signature<Args...>> : public BaseKernel {
+public:
+    PTXKernel(const std::string& ptx_code, const std::string& kernel_name, SignatureID sig_id)
+    : ptx_code(ptx_code), kernel_name(kernel_name), sig_id(sig_id) {
+        std::cout << "PTXKernel created with kernel name: " << kernel_name << " and signature ID: " << sig_id << std::endl;
+    }
+
+    template <typename... LaunchArgs>
+    void launch(LaunchArgs&&... args) {
+        fn(std::forward<LaunchArgs>(args)...);
+    }
+
+    void launchFromTuple(py::tuple py_args) override {
+        cuInit(0);
+
+        CUdevice device;
+        cuDeviceGet(&device, 0);
+
+        CUcontext context;
+        cuCtxCreate(&context, nullptr, 0, device);
+
+        CUmodule module;
+        // Load PTX string directly from memory
+        CUresult res = cuModuleLoadData(&module, ptx_code.c_str());
+        if (res != CUDA_SUCCESS) {
+            std::cerr << "Failed to load PTX module! Error code: " << res << "\n";
+            return;
+        }
+
+        CUfunction kernel;
+        cuModuleGetFunction(&kernel, module, kernel_name.c_str());
+
+        // Define grid and block dimensions
+        int gridDimX = 128, blockDimX = 256;
+        
+        // Set up kernel argument pointers
+        void* args[] = { /* pointers to device memory buffers */ };
+
+        // Launch Kernel
+        cuLaunchKernel(
+            kernel,
+            gridDimX, 1, 1,    // Grid dimensions
+            blockDimX, 1, 1,   // Block dimensions
+            0, nullptr,        // Shared memory bytes & stream
+            args, nullptr      // Kernel parameters
+        );
+
+        cuCtxSynchronize();
+        cuModuleUnload(module);
+        cuCtxDestroy(context);
+    }
+private:
+    std::string ptx_code;
+    std::string kernel_name;
+    SignatureID sig_id;
 };
 
 } // namespace pyggpu

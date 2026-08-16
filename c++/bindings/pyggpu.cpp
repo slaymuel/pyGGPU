@@ -9,6 +9,7 @@ PYBIND11_MODULE(pyggpu, m) {
         .def(py::init<>())
         .def("launch", [](PyGGpu &self,
                         const std::string &kernelName,
+                        KernelTarget target,
                         py::object ir,
                         py::tuple args,
                         py::dict kwargs) {
@@ -18,7 +19,13 @@ PYBIND11_MODULE(pyggpu, m) {
             ir::IR cpp_ir;
             cpp_ir.ParseFromString(serialized);
 
-            self.launch(kernelName, cpp_ir, args, kwargs);
+            self.launch(kernelName, target, cpp_ir, args, kwargs);
         })
         .def_static("dumpSignatures", &pyggpu::kernel_registry::dumpSignatures);
+
+    // Also expose the kernel target enum to Python
+    py::enum_<KernelTarget>(m, "KernelTarget")
+        .value("CPU", KernelTarget::CPU)
+        .value("PTX", KernelTarget::PTX)
+        .export_values();
 }

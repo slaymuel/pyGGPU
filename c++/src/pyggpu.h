@@ -10,6 +10,7 @@
 #include <pybind11/numpy.h>
 #include "../serialization/ir.pb.h"
 #include "kernel.h"
+#include "kernel_engine.h"
 #include "kernel_registry.h"
 #include "compiler.h"
 #include <llvm/IR/BasicBlock.h>
@@ -36,9 +37,13 @@ public:
 
     ~PyGGpu() = default;
 
-    void launch(const std::string& kernel_name, const ir::IR& ir, py::tuple args, py::dict kwargs){
+    void launch(const std::string& kernel_name, KernelTarget target, const ir::IR& ir, py::tuple args, py::dict kwargs){
         // Check if a kernel is already compiled.
-        compile(kernel_name, ir, args, kwargs);
+        if(!kernel_engine.isKernelCompiled(kernel_name))
+            compile(kernel_name, target, ir, args, kwargs);
+
+        kernel_engine.launchKernel(kernel_name, target, ir, args, kwargs);
+        //compile(kernel_name, target, ir, args, kwargs);
     }
 
     void getKernel();
@@ -84,33 +89,33 @@ public:
     }
 
 
-    void compile(const std::string& kernel_name, const ir::IR& ir, py::tuple& args, py::dict& kwargs){
-        std::string mangled_name = kernel_name;//getMangledName(kernel_name, args, kwargs);
-        if(!kernel_cache.contains(mangled_name)){
-            std::cout << "Compiling kernel: " << mangled_name << std::endl;
-            //auto kernel = compiler.compile(kernel_name, ir, args, kwargs);
-            auto compiled = compiler.compile(kernel_name, ir, args, kwargs);
-            auto kernel = kernel_registry::createKernel(kernel_name, compiled.sig_id, compiled.fn_ptr);
-
-            kernel_cache.insert_or_assign(mangled_name, std::move(kernel));
-            std::cout << "Kernel compiled and cached: " << mangled_name << std::endl;
-            kernel_cache[mangled_name]->launchFromTuple(args);
-            return;
-        } else {
-            std::cout << "Kernel already compiled: " << mangled_name << std::endl;
-            kernel_cache[mangled_name]->launchFromTuple(args);
-            return;
-        }
-
-        // Parsing is done and we do not need the GIL anymore. 
-        // Do not touch Python objects after this point.
-        {
-            py::gil_scoped_release release;
-        }
+    void compile(const std::string& kernel_name, KernelTarget target, const ir::IR& ir, py::tuple& args, py::dict& kwargs){
+        kernel_engine.compile(kernel_name, target, ir, args, kwargs);
+        //std::string mangled_name = kernel_name;//getMangledName(kernel_name, args, kwargs);
+        //if(!kernel_cache.contains(mangled_name)){
+        //    std::cout << "Compiling kernel: " << mangled_name << std::endl;
+        //    //auto kernel = compiler.compile(kernel_name, ir, args, kwargs);
+        //    auto compiled = compiler.compile(kernel_name, ir, args, kwargs);
+        //    auto kernel = kernel_registry::createKernel(kernel_name, compiled.sig_id, compiled.fn_ptr);
+//
+        //    kernel_cache.insert_or_assign(mangled_name, std::move(kernel));
+        //    std::cout << "Kernel compiled and cached: " << mangled_name << std::endl;
+        //    kernel_cache[mangled_name]->launchFromTuple(args);
+        //} else {
+        //    std::cout << "Kernel already compiled: " << mangled_name << std::endl;
+        //    kernel_cache[mangled_name]->launchFromTuple(args);
+        //}
+//
+        //// Parsing is done and we do not need the GIL anymore. 
+        //// Do not touch Python objects after this point.
+        //{
+        //    py::gil_scoped_release release;
+        //}
     }
 
 private:
 
     pyggpu::Compiler compiler;
     std::unordered_map<std::string, std::unique_ptr<pyggpu::BaseKernel>> kernel_cache;
+    KernelEngine kernel_engine;
 };

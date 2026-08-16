@@ -54,6 +54,8 @@ private:
         llvm::Function* fn
     );
 
+    void compilePTX(llvm::Module& module, llvm::Function* fn);
+
     llvm::Value* getBufferPointer(const std::string& name, llvm::Function* fn);
 
     void* extractPointerFromPython(py::tuple args, py::dict kwargs, const std::string& name);

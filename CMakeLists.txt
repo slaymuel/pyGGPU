@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.15)
-project(pyGGpu LANGUAGES C CXX)
+cmake_minimum_required(VERSION 3.17)
+project(pyGGpu LANGUAGES C CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,7 +12,11 @@ elseif(EXISTS "${CMAKE_SOURCE_DIR}/venv/bin/python3")
   set(Python_EXECUTABLE "${CMAKE_SOURCE_DIR}/venv/bin/python3")
 endif()
 
+find_package(Protobuf REQUIRED)
+find_package(CUDAToolkit REQUIRED)
 find_package(Python REQUIRED COMPONENTS Interpreter Development)
+find_package(pybind11 CONFIG REQUIRED)
+find_package(LLVM CONFIG REQUIRED)
 
 execute_process(
   COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir
@@ -21,7 +25,6 @@ execute_process(
 )
 
 set(pybind11_DIR "${pybind11_CMAKE_DIR}" CACHE PATH "Path to pybind11 CMake files")
-find_package(pybind11 CONFIG REQUIRED)
 
 pybind11_add_module(pyggpu MODULE
   c++/src/compiler.cpp
@@ -29,9 +32,6 @@ pybind11_add_module(pyggpu MODULE
   c++/bindings/pyggpu.cpp
   c++/serialization/ir.pb.cc
 )
-
-find_package(Protobuf REQUIRED)
-target_link_libraries(pyggpu PRIVATE protobuf::libprotobuf)
 
 # On many Linux distros llvm-config is versioned (e.g. llvm-config-20),
 # so auto-discover a matching LLVMConfig.cmake path if LLVM_DIR is unset.
@@ -44,11 +44,7 @@ if(NOT DEFINED LLVM_DIR)
   endforeach()
 endif()
 
-find_package(LLVM CONFIG REQUIRED)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
-
-target_include_directories(pyggpu PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(pyggpu PRIVATE ${LLVM_DEFINITIONS})
 
 # LLJIT requires ORC/ExecutionEngine-related components in addition to core IR support.
 llvm_map_components_to_libnames(LLVM_LIBS
@@ -59,12 +55,34 @@ llvm_map_components_to_libnames(LLVM_LIBS
   RuntimeDyld
   nativecodegen
   native
+  NVPTX
 )
-target_link_libraries(pyggpu PRIVATE ${LLVM_LIBS})
 
-target_include_directories(pyggpu PRIVATE c++/src)
+target_link_directories(pyggpu PRIVATE
+  /usr/local/cuda/lib64
+  /usr/local/cuda/lib64/stubs
+  /usr/lib/x86_64-linux-gnu
+  /usr/lib/x86_64-linux-gnu/stubs
+  /usr/lib/wsl/lib
+)
 
-target_compile_definitions(pyggpu PRIVATE VERSION_INFO=${PROJECT_VERSION})
+target_link_libraries(pyggpu PRIVATE 
+  ${LLVM_LIBS}
+  cuda
+  protobuf::libprotobuf
+)
+
+target_include_directories(pyggpu PRIVATE 
+  c++/src
+  ${LLVM_INCLUDE_DIRS}
+  ${CUDAToolkit_INCLUDE_DIRS}
+  /usr/local/cuda/include
+)
+
+target_compile_definitions(pyggpu PRIVATE 
+  VERSION_INFO=${PROJECT_VERSION}
+  ${LLVM_DEFINITIONS}
+)
 
 set_target_properties(pyggpu PROPERTIES
 PREFIX ""

@@ -14,18 +14,23 @@ struct KernelEntry;
 
 template<typename... Args>
 struct KernelEntry<Signature<Args...>> {
-    static std::unique_ptr<BaseKernel> make(const std::string& symbol, void* fn_ptr) {
+    static std::unique_ptr<BaseKernel> make(const std::string& symbol, void* fn_ptr, KernelTarget target) {
         using Sig = Signature<Args...>;
         using Fn = void(*)(Args...);
 
-        return std::make_unique<Kernel<Sig>>(symbol, reinterpret_cast<Fn>(fn_ptr));
+        if (target == KernelTarget::CPU) {
+            return std::make_unique<CPUKernel<Sig>>(symbol, reinterpret_cast<Fn>(fn_ptr));
+        }
+        else {
+            throw std::runtime_error("Unsupported kernel target");
+        }
     }
 };
 
 // 2. Registry Structures
 struct RegistryEntry {
     SignatureID id;
-    std::unique_ptr<BaseKernel> (*factory)(const std::string& symbol, void* fn_ptr);
+    std::unique_ptr<BaseKernel> (*factory)(const std::string& symbol, void* fn_ptr, KernelTarget target);
 };
 
 template<typename AllSigs>
@@ -82,10 +87,10 @@ inline void dumpSignatures() {
 
 inline constexpr auto registry_table = makeRegistry<AllSignatures>();
 
-inline std::unique_ptr<BaseKernel> createKernel(const std::string& symbol, const SignatureID id, void* fn_ptr) {
+inline std::unique_ptr<BaseKernel> createKernel(const std::string& symbol, const SignatureID id, void* fn_ptr, KernelTarget target) {
     for (const auto& entry : registry_table) {
         if (entry.id == id) {
-            return entry.factory(symbol, fn_ptr);
+            return entry.factory(symbol, fn_ptr, target);
         }
     }
     

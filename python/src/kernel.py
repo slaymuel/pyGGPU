@@ -2,6 +2,7 @@ import inspect
 import ast
 import sys
 import pathlib
+from enum import Enum
 import functools
 import irbuilder
 from serialization.operands import Buffer, Const, Types
@@ -11,6 +12,10 @@ root = pathlib.Path(__file__).resolve().parent
 build_dir = root.parents[1] / "build"
 sys.path.insert(0, str(build_dir))
 import pyggpu
+
+class Target(Enum):
+    CPU = 1
+    GPU = 2
 
 class KernelArg:
     def __init__(self, name, value):
@@ -54,7 +59,7 @@ def kernel(blocks=None, threads=None):
                 wrapped_args.append(KernelArg(name, value))
             wrapped_args = tuple(wrapped_args)
 
-            engine.launch(fn.__name__, ir, wrapped_args, kwargs)
+            engine.launch(fn.__name__, pyggpu.KernelTarget.CPU, ir, wrapped_args, kwargs)
             # return engine.launch(fn.__name__, *args, **kwargs)
             return fn(*args, **kwargs)
 
