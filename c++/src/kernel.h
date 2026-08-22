@@ -23,41 +23,8 @@ class BaseKernel {
 public:
     virtual ~BaseKernel() = default;
     virtual void launchFromTuple(py::tuple py_args) = 0;
-};
 
-template <typename Sig>
-class CPUKernel;
-
-template <typename... Args>
-class CPUKernel<Signature<Args...>> : public BaseKernel {
-public:
-    using Fn = void(*)(Args...);
-
-    explicit CPUKernel(const std::string& symbol, void(*fn_ptr)(Args...))
-    : symbol(symbol) {
-        this->fn = reinterpret_cast<Fn>(fn_ptr);
-        std::cout << "Kernel created with symbol: " << symbol << std::endl;
-    }
-    
-    template <typename... LaunchArgs>
-    void launch(LaunchArgs&&... args) {
-        fn(std::forward<LaunchArgs>(args)...);
-    }
-
-    void launchFromTuple(py::tuple py_args) {
-        if (py_args.size() != sizeof...(Args)) {
-            throw std::runtime_error("Argument count mismatch!");
-        }
-        
-        launchFromTupleImpl(py_args, std::index_sequence_for<Args...>{});
-    }
-
-    Fn getPtr() const { return fn; }
-
-private:
-    Fn fn;
-    std::string symbol;
-
+protected:
     template <typename T>
     static T castPythonArg(const pybind11::handle& item) {
         py::object obj = py::reinterpret_borrow<py::object>(item);
@@ -99,6 +66,40 @@ private:
             return inner_val.cast<T>();
         }
     }
+};
+
+template <typename Sig>
+class CPUKernel;
+
+template <typename... Args>
+class CPUKernel<Signature<Args...>> : public BaseKernel {
+public:
+    using Fn = void(*)(Args...);
+
+    explicit CPUKernel(const std::string& symbol, void(*fn_ptr)(Args...))
+    : symbol(symbol) {
+        this->fn = reinterpret_cast<Fn>(fn_ptr);
+        std::cout << "Kernel created with symbol: " << symbol << std::endl;
+    }
+    
+    template <typename... LaunchArgs>
+    void launch(LaunchArgs&&... args) {
+        fn(std::forward<LaunchArgs>(args)...);
+    }
+
+    void launchFromTuple(py::tuple py_args) override {
+        if (py_args.size() != sizeof...(Args)) {
+            throw std::runtime_error("Argument count mismatch!");
+        }
+        
+        launchFromTupleImpl(py_args, std::index_sequence_for<Args...>{});
+    }
+
+    Fn getPtr() const { return fn; }
+
+private:
+    Fn fn;
+    std::string symbol;
 
     template <std::size_t... Is>
     void launchFromTupleImpl(pybind11::tuple args, std::index_sequence<Is...>) {
@@ -116,8 +117,8 @@ class PTXKernel;
 template <typename... Args>
 class PTXKernel<Signature<Args...>> : public BaseKernel {
 public:
-    PTXKernel(const std::string& ptx_code, const std::string& kernel_name, SignatureID sig_id)
-    : ptx_code(ptx_code), kernel_name(kernel_name), sig_id(sig_id) {
+    PTXKernel(const CUfunction& fn, const std::string& kernel_name, SignatureID sig_id)
+    : fn(fn), kernel_name(kernel_name), sig_id(sig_id) {
         std::cout << "PTXKernel created with kernel name: " << kernel_name << " and signature ID: " << sig_id << std::endl;
     }
 
@@ -127,25 +128,6 @@ public:
     }
 
     void launchFromTuple(py::tuple py_args) override {
-        cuInit(0);
-
-        CUdevice device;
-        cuDeviceGet(&device, 0);
-
-        CUcontext context;
-        cuCtxCreate(&context, nullptr, 0, device);
-
-        CUmodule module;
-        // Load PTX string directly from memory
-        CUresult res = cuModuleLoadData(&module, ptx_code.c_str());
-        if (res != CUDA_SUCCESS) {
-            std::cerr << "Failed to load PTX module! Error code: " << res << "\n";
-            return;
-        }
-
-        CUfunction kernel;
-        cuModuleGetFunction(&kernel, module, kernel_name.c_str());
-
         // Define grid and block dimensions
         int gridDimX = 128, blockDimX = 256;
         
@@ -154,7 +136,7 @@ public:
 
         // Launch Kernel
         cuLaunchKernel(
-            kernel,
+            fn,
             gridDimX, 1, 1,    // Grid dimensions
             blockDimX, 1, 1,   // Block dimensions
             0, nullptr,        // Shared memory bytes & stream
@@ -162,11 +144,12 @@ public:
         );
 
         cuCtxSynchronize();
-        cuModuleUnload(module);
-        cuCtxDestroy(context);
+        //cuModuleUnload(cu_module);
+        //cuCtxDestroy(cu_context);
     }
+
 private:
-    std::string ptx_code;
+    CUfunction fn;
     std::string kernel_name;
     SignatureID sig_id;
 };

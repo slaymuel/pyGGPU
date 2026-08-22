@@ -59,9 +59,21 @@ Compiler::Compiler(){
         exit(1);
     }
     this->jit = std::move(*jit);
+
+    // Initialize CUDA
+    cuInit(0);
+    CUdevice device;
+    cuDeviceGet(&device, 0);
+    CUcontext cu_context;
+    cuCtxCreate(&cu_context, nullptr, 0, device);
 }
 
-CompiledFn Compiler::compile(std::string kernel_name, const ir::IR& ir, const py::tuple& args, const py::dict& kwargs) {
+// Destructor
+Compiler::~Compiler() {
+    // Clean up the JIT compiler
+}
+
+CompiledFn Compiler::compile(std::string kernel_name, KernelTarget target, const ir::IR& ir, const py::tuple& args, const py::dict& kwargs) {
     auto ctx = std::make_unique<llvm::LLVMContext>();
     auto module = std::make_unique<llvm::Module>("kernel", *ctx);
 
@@ -116,7 +128,7 @@ CompiledFn Compiler::compile(std::string kernel_name, const ir::IR& ir, const py
     return CompiledFn{kernel_ptr, sig_id};
 }
 
-void Compiler::compilePTX(llvm::Module& module, llvm::Function* fn) {
+void Compiler::compilePTX(std::string kernel_name, llvm::Module& module, llvm::Function* fn) {
     // Set target triple & data layout on your LLVM module
     std::string triple = "nvptx64-nvidia-cuda";
     module.setTargetTriple(triple);
@@ -136,7 +148,17 @@ void Compiler::compilePTX(llvm::Module& module, llvm::Function* fn) {
     tm->addPassesToEmitFile(pm, write_stream, nullptr, llvm::CodeGenFileType::AssemblyFile);
     pm.run(module);
 
-    // Create a PTXKernel and set ptx_output.
+    CUmodule cu_module;
+    // JIT compile the PTX to SASS
+    CUresult res = cuModuleLoadData(&cu_module, ptx_output.c_str());
+    if (res != CUDA_SUCCESS) {
+        // In a real pybind11 app, throw a std::runtime_error here 
+        // so Python catches it as an Exception!
+        throw std::runtime_error("Failed to load PTX module! Error code: " + std::to_string(res));
+    }
+
+    CUfunction kernel;
+    cuModuleGetFunction(&kernel, cu_module, kernel_name.c_str());
 }
 
 void Compiler::lowerToLLVM(

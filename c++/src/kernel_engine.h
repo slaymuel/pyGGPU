@@ -66,14 +66,24 @@ public:
     void compileCPU(const std::string& kernel_name, const ir::IR& ir, py::tuple& args, py::dict& kwargs){
         std::cout << "Compiling kernel: " << kernel_name << std::endl;
         //auto kernel = compiler.compile(kernel_name, ir, args, kwargs);
-        auto compiled = compiler.compile(kernel_name, ir, args, kwargs);
-        auto kernel = kernel_registry::createKernel(kernel_name, compiled.sig_id, compiled.fn_ptr, KernelTarget::CPU);
+        auto compiled = compiler.compile(kernel_name, KernelTarget::CPU, ir, args, kwargs);
+        auto handle = std::get<void*>(compiled.handle);
+        auto kernel = kernel_registry::createKernel(kernel_name, compiled.sig_id, handle);
 
         kernel_cache.insert_or_assign(kernel_name, std::move(kernel));
         std::cout << "Kernel compiled and cached: " << kernel_name << std::endl;
         kernel_cache[kernel_name]->launchFromTuple(args);
     }
-    void compilePTX(const std::string& kernel_name, const ir::IR& ir, py::tuple& args, py::dict& kwargs){}
+    void compilePTX(const std::string& kernel_name, const ir::IR& ir, py::tuple& args, py::dict& kwargs){
+        std::cout << "Compiling PTX kernel: " << kernel_name << std::endl;
+        auto compiled = compiler.compile(kernel_name, KernelTarget::PTX, ir, args, kwargs);
+        auto handle = std::get<CUfunction>(compiled.handle);
+        auto kernel = kernel_registry::createKernel(kernel_name, compiled.sig_id, handle);
+
+        kernel_cache.insert_or_assign(kernel_name, std::move(kernel));
+        std::cout << "PTX Kernel compiled and cached: " << kernel_name << std::endl;
+        kernel_cache[kernel_name]->launchFromTuple(args);
+    }
 
     bool isKernelCompiled(const std::string& kernel_name){
         return kernel_cache.contains(kernel_name);

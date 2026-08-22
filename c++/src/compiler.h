@@ -7,6 +7,7 @@
 #include "../serialization/ir.pb.h"
 #include "signature.h"
 #include "type_mapping.h"
+#include "kernel.h"
 
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
@@ -38,14 +39,15 @@ struct KernelArg {
 };
 
 struct CompiledFn {
-    void* fn_ptr = nullptr;  
+    std::variant<std::monostate, void*, CUfunction> handle;  
     SignatureID sig_id = 0;  
 };
 
 class Compiler{
 public:
     Compiler();
-    CompiledFn compile(std::string kernel_name, const ir::IR& ir, const py::tuple& args, const py::dict& kwargs);
+    ~Compiler();
+    CompiledFn compile(std::string kernel_name, KernelTarget target, const ir::IR& ir, const py::tuple& args, const py::dict& kwargs);
 
 private:
     void lowerToLLVM(
@@ -54,7 +56,7 @@ private:
         llvm::Function* fn
     );
 
-    void compilePTX(llvm::Module& module, llvm::Function* fn);
+    void compilePTX(std::string kernel_name, llvm::Module& module, llvm::Function* fn);
 
     llvm::Value* getBufferPointer(const std::string& name, llvm::Function* fn);
 
